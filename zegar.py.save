@@ -1,0 +1,407 @@
+import sys
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel
+from PyQt5.QtGui import QPainter, QPen, QColor, QFont, QConicalGradient, QBrush, QPixmap, QFontDatabase
+from PyQt5.QtCore import Qt, QTimer, QTime, QRect, QPropertyAnimation, pyqtProperty, QPoint
+import math
+import subprocess
+import re
+import socket
+
+class CircularProgressBar(QWidget):
+    def __init__(self, radius, width):
+        super().__init__()
+        self.defined_radius = radius
+        self.defined_width = width
+        self._angle = 180
+        self._additional_angle1 = 60
+        self._additional_angle2 = 60
+        self._additional_angle3 = 30
+        self._additional_angle4 = 30
+        #self.data = b'00:03:45.891 R 19F21435 00 0F 05 6B 00 EB 74 FF\r\n00:03:45.892 R 19F21436 00 25 05 6B 00 C8 74 FF\r\n00:03:45.892 R 19F21232 A0 0B FF 00 00 13 64 C2\r\n00:03:45.893 R 19F21232 A1 00 FF FF 7A 00 FF FF\r\n00:03:45.985 R 09F20001 00 00 00 FF FF 7F FF FF\r\n
+
+        font_path = "./font.ttf"
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        self.font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
+        self.initUI()
+        self.create_animation()
+        # Load the image
+        self.image = QPixmap("logo.png")  # Replace with your image path
+
+        # Scale the image
+        self.scaled_image = self.image.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.setWindowTitle("Clock with Hour Marks")
+       # self.setWindowFlags(Qt.FramelessWindowHint)  # Remove window frame
+       # self.showFullScreen()  # Set to full screen
+
+        #Initialize CAN raw data
+        self.data = ''
+
+        # Initialize CAN data variables
+        self.voltage = '0.0'
+        self.current = '0.0'
+        self.battery_temperature = '0.0'
+        self.speed = '0.0'
+        self.power = '0.0'
+        self.engine_temperature = '0.0'
+    def initUI(self):
+        self.setGeometry(0, 0, int(self.defined_radius * 2 + 20), int(self.defined_radius * 2 + 20))
+        self.setWindowTitle('Clock with Semi-Circular Progress Bar')
+        center = QPoint(self.width() - 105, self.height() - 150)
+        self.setStyleSheet("background-color: dark-blue;")
+
+        # Initialize voltage clock
+        self.label1 = QLabel('1111111111111', self)
+        self.label1.move(center.x() - self.defined_radius - 200, center.y() - 150)
+        self.label1.setStyleSheet("color: white;")
+        self.label1.setFont(QFont(self.font_family, 24))
+
+        # Initialize current clock
+        self.label2 = QLabel('1111111111', self)
+        self.label2.move(center.x() - self.defined_radius + 180, center.y() - 150)
+        self.label2.setStyleSheet("color: white;")
+        self.label2.setFont(QFont(self.font_family, 24))
+
+        # Initialize RPM clock
+        self.label3 = QLabel('1111111111', self)
+        self.label3.move(center.x() - self.defined_radius - 100, center.y() - self.defined_radius - 200)
+        self.label3.setStyleSheet("color: white;")
+        self.label3.setFont(QFont(self.font_family, 50))
+
+        # Initialize power clock
+        self.label4 = QLabel('1111111111111', self)
+        self.label4.move(center.x() - self.defined_radius - 100, center.y())
+        self.label4.setStyleSheet("color: white;")
+        self.label4.setFont(QFont(self.font_family, 48))
+
+        # Initialize battery temperature clock
+        self.label5 = QLabel('111111111111', self)
+        self.label5.move(center.x() - self.defined_radius - 250, center.y() - 350)
+        self.label5.setStyleSheet("color: white;")
+        self.label5.setFont(QFont(self.font_family, 24))
+
+        # Initialize engine temperature clock
+        self.label6 = QLabel('11111111111', self)
+        self.label6.move(center.x() - self.defined_radius + 130, center.y() - 350)
+        self.label6.setStyleSheet("color: white;")
+        self.label6.setFont(QFont(self.font_family, 24))
+
+        #Clocks labels section
+
+        # Draw RPM label
+        self.label7 = QLabel('RPM', self)
+        self.label7.move(center.x() - self.defined_radius - 30, center.y() - self.defined_radius - 230)
+        self.label7.setStyleSheet("color: white;")
+        self.label7.setFont(QFont(self.font_family, 16))
+
+        # Draw Voltage label
+        self.label8 = QLabel('Voltage [ V ]', self)
+        self.label8.move(center.x() - self.defined_radius - 200, center.y() - 200)
+        self.label8.setStyleSheet("color: white;")
+        self.label8.setFont(QFont(self.font_family, 12))
+
+        # Draw Current label
+        self.label9 = QLabel('Current [ A ]', self)
+        self.label9.move(center.x() - self.defined_radius + 250, center.y() - 200)
+        self.label9.setStyleSheet("color: white;")
+        self.label9.setFont(QFont(self.font_family, 12))
+
+        # Draw Power label
+        self.label10 = QLabel('Power [ kW ]', self)
+        self.label10.move(center.x() - self.defined_radius, center.y() - 60)
+        self.label10.setStyleSheet("color: white;")
+        self.label10.setFont(QFont(self.font_family, 16))
+
+        # Draw battery temperature label
+        self.label11 = QLabel('Battery Temperature [ °C ]', self)
+        self.label11.move(center.x() - self.defined_radius - 250, center.y() - 400)
+        self.label11.setStyleSheet("color: white;")
+        self.label11.setFont(QFont(self.font_family, 12))
+
+        # Draw engine temperature label
+        self.label12 = QLabel('Engine Temperature [ °C ]', self)
+        self.label12.move(center.x() - self.defined_radius + 200, center.y() - 400)
+        self.label12.setStyleSheet("color: white;")
+        self.label12.setFont(QFont(self.font_family, 12))
+
+        #self.timer = QTimer(self)
+        #self.timer.timeout.connect(self.udp_receiver)
+        #self.timer.timeout.connect(self.simulate_data_update)
+        #self.timer.timeout.connect(self.update_progress)
+
+
+        #self.timer.start(500)  # Update every 0.1 seconds
+
+        self.show()
+
+    def create_animation(self):
+        self.angle_animation = QPropertyAnimation(self, b"angle")
+        self.angle_animation.setDuration(100)  # Adjusted duration to match timer
+
+        self.additional_angle1_animation = QPropertyAnimation(self, b"additional_angle1")
+        self.additional_angle1_animation.setDuration(100)  # Adjusted duration to match timer
+
+        self.additional_angle2_animation = QPropertyAnimation(self, b"additional_angle2")
+        self.additional_angle2_animation.setDuration(100)  # Adjusted duration to match timer
+
+        self.additional_angle3_animation = QPropertyAnimation(self, b"additional_angle3")
+        self.additional_angle3_animation.setDuration(100)  # Adjusted duration to match timer
+
+        self.additional_angle4_animation = QPropertyAnimation(self, b"additional_angle4")
+        self.additional_angle4_animation.setDuration(100)  # Adjusted duration to match timer
+
+    def paintEvent(self, event):
+        center = QPoint(self.width() // 2, self.height() // 2)
+        radius = min(self.width(), self.height()) // 2 - 50
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        gradient = QConicalGradient(center.x(), center.y(), 180)
+        gradient.setColorAt(0.0, QColor(Qt.cyan))
+        gradient.setColorAt(0.33, QColor(Qt.red))
+        gradient.setColorAt(0.67, QColor(Qt.red))
+        gradient.setColorAt(1.0, QColor(Qt.cyan))
+
+        gradient2 = QConicalGradient(center.x() + 200, center.y() + 150, 180)
+        gradient2.setColorAt(0.0, QColor(Qt.red))
+        gradient2.setColorAt(0.1, QColor(Qt.green))
+        gradient2.setColorAt(0.3, QColor(Qt.green))
+        gradient2.setColorAt(0.4, QColor(Qt.red))
+        gradient2.setColorAt(1.0, QColor(Qt.red))
+
+        # Define main arc brush
+        pen = QPen(QBrush(gradient), 24, Qt.DashDotLine)
+        # Define a custom dash pattern
+        dashes = [1.6, 1.76]  # pattern: 10px dash, 5px space, 2px dash, 5px space
+        pen.setDashPattern(dashes)
+
+        painter.setPen(pen)
+        # Draw arcs
+        window_width = self.width()
+        window_height = self.height()
+        arc_width = min(window_width, window_height) // 2
+        arc_height = arc_width
+        x = (window_width - arc_width) // 2
+        y = (window_height - arc_height) // 2
+        rect = QRect(x, y, arc_width, arc_height)
+        painter.drawArc(rect, 180 * 16, -self.angle * 16)
+
+        painter.setPen(QPen(QBrush(gradient2), 24))
+        painter.drawArc(rect, 300 * 16, self.additional_angle1 * 8)
+
+        painter.setPen(QPen(QBrush(gradient2), 24))
+        painter.drawArc(rect, 240 * 16, -self.additional_angle2 * 8)
+
+#        painter.setPen(QPen(QBrush(gradient2), 24))
+#        painter.drawArc(rect, 180 * 16, -self.additional_angle3 * 8)
+
+#        painter.setPen(QPen(QBrush(gradient2), 24))
+#        painter.drawArc(rect, 120 * 16, -self.additional_angle4 * 8)
+
+        painter.setPen(QPen(Qt.white, 10))
+        painter.setFont(QFont("Seven Segment", 18))  # Set font for hour marks
+
+        for i in range(9):
+            angle = i * 22.5
+            radian = math.radians(angle)
+
+            x1 = center.x() + (radius - 20) * math.cos(radian) * -1
+            y1 = center.y() + (radius - 20) * math.sin(radian) * -1
+            x2 = center.x() + radius * math.cos(radian) * -1
+            y2 = center.y() + radius * math.sin(radian) * -1
+
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+            # Calculate the position for each hour number
+            tx = center.x() + (radius - 40) * math.cos(radian) * -1 - 25
+            ty = center.y() + (radius - 40) * math.sin(radian) * -1 + 30
+
+            # Draw the hour number
+            painter.drawText(int(tx), int(ty), str(250 * i))
+
+        # Calculate position to center the image
+        img_x = center.x() - self.scaled_image.width() // 2
+        img_y = center.y() - self.scaled_image.height() // 2
+
+        # Draw the image in the center of the clock
+        painter.drawPixmap(img_x, img_y, self.scaled_image)
+
+        painter.end()
+
+    def udp_receiver(self):
+        local_ip = "0.0.0.0"
+        local_port = 8090
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind((local_ip, local_port))
+
+        print(f"Listening on {local_ip}:{local_port}")
+
+        data, addr = sock.recvfrom(4096)
+        print(f"Raw message: " + str(data))
+        self.data = data
+        print("Koniec nasłuchu")
+    # Zahardcodowane dane CAN (przykładowe dane)
+    #hardcoded_data = udp_receiver()
+    #hardcoded_data = b'00:03:54.940 R 19F21432 00 71 14 6B 00 CF 74 FF\r\n00:03:54.940 R 19F21433 00 14 05 6B 00 CF 74 FF\r\n00:03:54.941 R 19F21434 00 21 05 6B 00 E1 74 FF\r\n00:03:54.941 R 19F21435 00 19 05 6B 00 EB 74 FF\r\n00:03:54.942 R 19F21436 00 23 05 6B 00 DC 74 FF\r\n00:03:54.942 R 19F21232 60 0B FF 00 00 13 64 C1\r\n00:03:54.943 R 19F21232 61 00 FF FF 7A 00 FF FF\r\n00:03:54.996 R 09F20001 00 00 00 FF FF 7F FF FF\r\n00:03:54.997 R 09F20501 00 FD FF FF FF FF E0 FF\r\n00:03:54.997 R 1CFF0001 1D 9C 15 04 00 FF FF FF\r\n00:03:55.096 R 09F20001 00 00 00 FF FF 7F FF FF\r\n00:03:55.097 R 09F20501 00 FD FF FF FF FF E0 FF\r\n00:03:55.098 R 1CFF0001 1D 9C 15 04 00 FF FF FF\r\n00:03:55.196 R 09F20001 00 00 00 FF FF 7F FF FF\r\n00:03:55.197 R 09F20501 00 FD FF FF FF FF E0 FF\r\n00:03:55.198 R 1CFF0001 1D 9C 15 04 00 FF FF FF\r\n00:03:55.292 R 09F00732 00 1C 15 01 06 00 00 FF\r\n00:03:55.292 R 09F00732 01 FF FF FF FF FF FF FF\r\n00:03:55.293 R 09F00732 02 FF FF FF FF FF FF FF\r\n00:03:55.293 R 09F00732 03 FF FF FF FF FF FF FF\r\n00:03:55.294 R 09F00732 04 02 FF FF FF FF FF FF\r\n00:03:55.297 R 09F20001 00 00 00 FF FF 7F FF FF\r\n00:03:55.297 R 09F20501 00 FD FF FF FF FF E0 FF\r\n00:03:55.298 R 1CFF0001 1D 9C 15 04 00 FF FF FF\r\n00:03:55.397 R 09F20001 00 00 00 FF FF 7F FF FF\r\n00:03:55.397 R 09F20501 00 FD FF FF FF FF E0 FF\r\n00:03:55.398 R 1CFF0001 1D 9C 15 04 00 FF FF FF\r\n00:03:55.398 R 09F20101 80 1A 00 FF FF FF FF 3F\r\n00:03:55.399 R 09F20101 81 75 A0 14 FF 7F FF FF\r\n'
+
+    def extract_battery_status(self, decoded_data):
+        # Wyrażenie regularne do wyciągania statusu baterii
+        status_pattern = re.compile(r'\d+\s+50\s+255\s+127508 Battery Status:\s*(.*)')
+        status_pattern2 = re.compile(r'Engine Parameters\s*(.*)')
+        temperature_pattern = re.compile(r'127489.*Temperature = ([\d.]+) C')
+
+        status_matches = status_pattern.findall(decoded_data)
+        status_matches2 = status_pattern2.findall(decoded_data)
+        temperature_matches = temperature_pattern.findall(decoded_data)
+
+        print(f"Engine Temperature: {temperature_matches[0]}")
+        self.engine_temperature = temperature_matches[0] #to moze nie działać to sie najwyzej usunie
+
+        if status_matches:
+            print("Battery Status:")
+            for status in status_matches:
+                voltage_match = re.search(r'Voltage = ([\d.]+) V', status)
+                current_match = re.search(r'Current = (-?[\d.]+) A', status)
+                battery_temperature = re.search(r'Temperature = ([\d.]+) C', status)
+
+                if voltage_match:
+                    self.voltage = voltage_match.group(1)
+                else:
+                    print("No voltage match found in status:", status)
+
+                if current_match:
+                    self.current = current_match.group(1)
+                else:
+                    print("No current match found in status:", status)
+
+                if battery_temperature:
+                    self.battery_temperature = battery_temperature.group(1)
+                else:
+                    print("No current match found in status:", status)
+
+            self.power = str(round(float(self.voltage) * float(self.current),1) / -1000)
+            print(f"Voltage: {self.voltage} V, Current: {self.current} A, Power: {self.power}, Battery Temperature: {battery_temperature}",)
+        else:
+            print("Nie znaleziono informacji o statusie baterii.")
+
+        if status_matches2:
+            print("Engine parameters:")
+            for status in status_matches2:
+                float_speed = re.search(r'Speed = ([\d.]+) rpm', status).group(1)
+                self.speed = str(int(float(float_speed)))
+                print(f"Speed: {self.speed} rpm")
+        else:
+            print("Nie znaleziono informacji o statusie baterii.")
+
+    def process_can_data(self, data):
+        try:
+            # Uruchom analyzer i przekieruj dane do niego za pomocą subprocess
+            analyzer_proc = subprocess.Popen(['analyzer'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                             stderr=subprocess.PIPE)
+            stdout, stderr = analyzer_proc.communicate(input=data)
+
+            # Odczytuj i wyświetlaj dane z analyzer
+            if stdout:
+                print("Przetworzone dane CAN:")
+                decoded_data = stdout.decode('utf-8').strip()
+                print(decoded_data)
+                self.extract_battery_status(decoded_data)
+            if stderr:
+                print("Błędy:")
+                print(stderr.decode('utf-8').strip())
+        except Exception as e:
+            print(f"Error: {e}")
+
+    def simulate_data_update(self):
+        # Simulate processing CAN data
+        self.process_can_data(self.data)
+    def update_progress(self):
+        current_time = QTime.currentTime()
+        seconds = current_time.second()
+        milliseconds = current_time.msec()
+        total_seconds = seconds + milliseconds / 1000.0
+        calibrated_speed = float(self.speed) / 11.11 # RPM/(RPM/180)
+        calibrated_current = float(self.current) * 4.5 * -1  # (MAX A - MIN A) * 4.5 - wspolczynnik dla max 30 A
+        calibrated_power = float(self.power) / 11.11 # (MAX P - MIN P) * ileś tam - teraz współczynnik jest dla max 1000 W
+        new_angle = calibrated_speed % 181
+        new_additional_angle1 = calibrated_power % 91 # prawy łuk
+        new_additional_angle2 = calibrated_current % 90 # lewy łuk
+        new_additional_angle3 = (total_seconds * 1.5) % 90
+        new_additional_angle4 = (total_seconds * 1) % 90
+        self.label1.setText(self.voltage)  # Display voltage
+        self.label2.setText(self.current)  # Display current
+        self.label3.setText(self.speed)    # Display speed
+        #self.label4.setText(current_time.toString('ss.zzz')[:-2])  # Display seconds and milliseconds
+        self.label4.setText(self.power)  # Display power
+        self.label5.setText(self.battery_temperature)  # Display battery temperature
+        self.label6.setText(self.engine_temperature)  # Display engine temperature
+        self.angle_animation.stop()
+        self.angle_animation.setStartValue(self.angle)
+        self.angle_animation.setEndValue(new_angle)
+        self.angle_animation.start()
+
+        self.additional_angle1_animation.stop()
+        self.additional_angle1_animation.setStartValue(self.additional_angle1)
+        self.additional_angle1_animation.setEndValue(new_additional_angle1)
+        self.additional_angle1_animation.start()
+
+        self.additional_angle2_animation.stop()
+        self.additional_angle2_animation.setStartValue(self.additional_angle2)
+        self.additional_angle2_animation.setEndValue(new_additional_angle2)
+        self.additional_angle2_animation.start()
+
+        self.additional_angle3_animation.stop()
+        self.additional_angle3_animation.setStartValue(self.additional_angle3)
+        self.additional_angle3_animation.setEndValue(new_additional_angle3)
+        self.additional_angle3_animation.start()
+
+
+
+    @pyqtProperty(int)
+    def angle(self):
+        return self._angle
+
+    @angle.setter
+    def angle(self, value):
+        self._angle = value
+        self.update()
+
+    @pyqtProperty(int)
+    def additional_angle1(self):
+        return self._additional_angle1
+
+    @additional_angle1.setter
+    def additional_angle1(self, value):
+        self._additional_angle1 = value
+        self.update()
+
+    @pyqtProperty(int)
+    def additional_angle2(self):
+        return self._additional_angle2
+
+    @additional_angle2.setter
+    def additional_angle2(self, value):
+        self._additional_angle2 = value
+        self.update()
+
+    @pyqtProperty(int)
+    def additional_angle3(self):
+        return self._additional_angle3
+
+    @additional_angle3.setter
+    def additional_angle3(self, value):
+        self._additional_angle3 = value
+        self.update()
+
+    @pyqtProperty(int)
+    def additional_angle4(self):
+        return self._additional_angle4
+
+    @additional_angle4.setter
+    def additional_angle4(self, value):
+        self._additional_angle4 = value
+        self.update()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    ex = CircularProgressBar(500, 20)
+    sys.exit(app.exec_())
