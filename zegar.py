@@ -13,7 +13,6 @@ class RPMWorker(QThread):
     current_signal = pyqtSignal(str)  # signal emitted with current value
     battery_temp_signal = pyqtSignal(str)  # signal emitted with battery temperature
     engine_temp_signal = pyqtSignal(str)  # signal emitted with engine temperature
-    power_signal = pyqtSignal(str)  # signal emitted with calculated power
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -71,15 +70,6 @@ class RPMWorker(QThread):
                         battery_temp_value = battery_temp_match.group(1)
                         print("Battery Temperature:", battery_temp_value)
                         self.battery_temp_signal.emit(battery_temp_value)
-                    
-                    # Calculate power if we have both voltage and current
-                    if voltage_match and current_match:
-                        try:
-                            power_value = str(round(float(voltage_match.group(1)) * float(current_match.group(1)), 1) / -1000)
-                            print("Power:", power_value)
-                            self.power_signal.emit(power_value)
-                        except ValueError:
-                            pass
                 
                 # Handle engine temperature from message ID 127489
                 elif "127489" in line:
@@ -139,7 +129,6 @@ class CircularProgressBar(QWidget):
         self.rpm_worker.current_signal.connect(self.on_current_update)
         self.rpm_worker.battery_temp_signal.connect(self.on_battery_temp_update)
         self.rpm_worker.engine_temp_signal.connect(self.on_engine_temp_update)
-        self.rpm_worker.power_signal.connect(self.on_power_update)
         self.rpm_worker.start()
 
     def initUI(self):
@@ -308,12 +297,23 @@ class CircularProgressBar(QWidget):
         painter.drawPixmap(img_x, img_y, self.scaled_image)
         painter.end()
 
+    def calculate_power(self):
+        """Calculate power from voltage and current"""
+        try:
+            power_value = str(round(float(self.voltage) * float(self.current), 1) / -1000)
+            self.power = power_value
+            print(f"Calculated Power: {power_value} kW (V={self.voltage}, I={self.current})")
+        except (ValueError, AttributeError):
+            self.power = '0.0'
+
     def on_voltage_update(self, voltage_value):
         self.voltage = voltage_value
+        self.calculate_power()
         self.update_progress()
 
     def on_current_update(self, current_value):
         self.current = current_value
+        self.calculate_power()
         self.update_progress()
 
     def on_battery_temp_update(self, battery_temp_value):
@@ -322,10 +322,6 @@ class CircularProgressBar(QWidget):
 
     def on_engine_temp_update(self, engine_temp_value):
         self.engine_temperature = engine_temp_value
-        self.update_progress()
-
-    def on_power_update(self, power_value):
-        self.power = power_value
         self.update_progress()
 
     def update_progress(self):
