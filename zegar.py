@@ -1,10 +1,12 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtGui import QPainter, QPen, QColor, QFont, QConicalGradient, QBrush, QPixmap, QFontDatabase
-from PyQt5.QtCore import Qt, QTimer, QTime, QRect, QPropertyAnimation, pyqtProperty, QPoint, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QTime, QRect, QPropertyAnimation, pyqtProperty, QPoint, QThread, pyqtSignal, QDateTime
 import math
 import subprocess
 import re
+import csv
+import os
 
 # CAN data worker thread
 class RPMWorker(QThread):
@@ -136,6 +138,7 @@ class CircularProgressBar(QWidget):
         self.setWindowTitle('Clock with Semi-Circular Progress Bar')
         center = QPoint(self.width() - 105, self.height() - 150)
         self.setStyleSheet("background-color: dark-blue;")
+        self.setFocusPolicy(Qt.StrongFocus)  # Enable keyboard focus
 
         # Initialize voltage clock
         self.label1 = QLabel('1111111111111', self)
@@ -210,6 +213,21 @@ class CircularProgressBar(QWidget):
         self.label12.move(center.x() - self.defined_radius + 50, center.y() - 550)
         self.label12.setStyleSheet("color: white;")
         self.label12.setFont(QFont(self.font_family, 12))
+
+        # CSV dump timer label (under logo)
+        self.dump_timer_label = QLabel('', self)
+        self.dump_timer_label.move(center.x() - self.defined_radius - 50, center.y() + 80)
+        self.dump_timer_label.setStyleSheet("color: yellow;")
+        self.dump_timer_label.setFont(QFont(self.font_family, 16))
+        self.dump_timer_label.hide()
+
+        # CSV logging variables
+        self.csv_logging = False
+        self.csv_file = None
+        self.csv_writer = None
+        self.dump_start_time = None
+        self.dump_timer = QTimer(self)
+        self.dump_timer.timeout.connect(self.update_dump_timer)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_progress)
@@ -306,6 +324,87 @@ class CircularProgressBar(QWidget):
         except (ValueError, AttributeError):
             self.power = '0.0'
 
+    def keyPressEvent(self, event):
+        """Handle key press events"""
+        if event.key() == Qt.Key_Space:
+            if not self.csv_logging:
+                self.start_csv_logging()
+            else:
+                self.stop_csv_logging()
+        super().keyPressEvent(event)
+
+    def start_csv_logging(self):
+        """Start CSV data logging"""
+        # Create filename with current date and time
+        current_datetime = QDateTime.currentDateTime()
+        filename = current_datetime.toString("yyyy-MM-dd_hh-mm-ss") + "_data.csv"
+        
+        try:
+            self.csv_file = open(filename, 'w', newline='')
+            self.csv_writer = csv.writer(self.csv_file)
+            
+            # Write header
+            header = ['Timestamp', 'RPM', 'Voltage_V', 'Current_A', 'Power_kW', 'Battery_Temp_C', 'Engine_Temp_C']
+            self.csv_writer.writerow(header)
+            
+            self.csv_logging = True
+            self.dump_start_time = QTime.currentTime()
+            self.dump_timer.start(100)  # Update every 100ms for smooth timer display
+            self.dump_timer_label.show()
+            
+            print(f"Started CSV logging to: {filename}")
+            
+        except Exception as e:
+            print(f"Error starting CSV logging: {e}")
+
+    def stop_csv_logging(self):
+        """Stop CSV data logging"""
+        if self.csv_file:
+            self.csv_file.close()
+            self.csv_file = None
+            self.csv_writer = None
+        
+        self.csv_logging = False
+        self.dump_timer.stop()
+        self.dump_timer_label.hide()
+        print("Stopped CSV logging")
+
+    def log_data_to_csv(self):
+        """Log current data to CSV file"""
+        if self.csv_logging and self.csv_writer:
+            try:
+                current_time = QTime.currentTime()
+                timestamp = current_time.toString("hh:mm:ss.zzz")
+                
+                row = [
+                    timestamp,
+                    self.speed,
+                    self.voltage,
+                    self.current,
+                    self.power,
+                    self.battery_temperature,
+                    self.engine_temperature
+                ]
+                
+                self.csv_writer.writerow(row)
+                self.csv_file.flush()  # Ensure data is written immediately
+                
+            except Exception as e:
+                print(f"Error logging data to CSV: {e}")
+
+    def update_dump_timer(self):
+        """Update the dump timer display"""
+        if self.dump_start_time:
+            current_time = QTime.currentTime()
+            elapsed_ms = self.dump_start_time.msecsTo(current_time)
+            elapsed_seconds = elapsed_ms / 1000.0
+            
+            minutes = int(elapsed_seconds // 60)
+            seconds = elapsed_seconds % 60
+            
+            timer_text = f"Recording: {minutes:02d}:{seconds:05.2f}"
+            self.dump_timer_label.setText(timer_text)
+
     def on_voltage_update(self, voltage_value):
         self.voltage = voltage_value
         self.calculate_power()
@@ -343,6 +442,10 @@ class CircularProgressBar(QWidget):
         self.label4.setText(self.power)
         self.label5.setText(self.battery_temperature)
         self.label6.setText(self.engine_temperature)
+        
+        # Log data to CSV if logging is active
+        self.log_data_to_csv()
+        
         self.angle_animation.stop()
         self.angle_animation.setStartValue(self.angle)
         self.angle_animation.setEndValue(new_angle)
@@ -368,9 +471,15 @@ class CircularProgressBar(QWidget):
         self.update_progress()
 
     def closeEvent(self, event):
+        # Stop CSV logging if active
+        if self.csv_logging:
+            self.stop_csv_logging()
+        
+        # Stop CAN worker thread
         if hasattr(self, 'rpm_worker'):
             self.rpm_worker.stop()
             self.rpm_worker.wait()
+        
         super().closeEvent(event)
 
     @pyqtProperty(int)
