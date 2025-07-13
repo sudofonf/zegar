@@ -6,14 +6,24 @@ import math
 import subprocess
 import re
 
-# CAN RPM worker thread
+# CAN data worker thread
 class RPMWorker(QThread):
     rpm_signal = pyqtSignal(int)  # signal emitted with RPM value
+    voltage_signal = pyqtSignal(str)  # signal emitted with voltage value
+    current_signal = pyqtSignal(str)  # signal emitted with current value
+    battery_temp_signal = pyqtSignal(str)  # signal emitted with battery temperature
+    engine_temp_signal = pyqtSignal(str)  # signal emitted with engine temperature
+    power_signal = pyqtSignal(str)  # signal emitted with calculated power
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._stop = False
+        # Patterns for different CAN message IDs
         self.rpm_pattern = re.compile(r'Speed\s*=\s*([\d\.]+)\s*rpm', re.IGNORECASE)
+        self.voltage_pattern = re.compile(r'Voltage\s*=\s*([\d\.]+)\s*V', re.IGNORECASE)
+        self.current_pattern = re.compile(r'Current\s*=\s*(-?[\d\.]+)\s*A', re.IGNORECASE)
+        self.battery_temp_pattern = re.compile(r'Temperature\s*=\s*([\d\.]+)\s*C', re.IGNORECASE)
+        self.engine_temp_pattern = re.compile(r'Temperature\s*=\s*([\d\.]+)\s*C', re.IGNORECASE)
         self.cmd = "candump can0 | candump2analyzer | analyzer"
 
     def run(self):
@@ -29,6 +39,7 @@ class RPMWorker(QThread):
             if not line and process.poll() is not None:
                 break
             if line:
+                # Handle RPM data from message ID 127488
                 if "127488" in line:
                     match = self.rpm_pattern.search(line)
                     if match:
@@ -38,6 +49,47 @@ class RPMWorker(QThread):
                             self.rpm_signal.emit(rpm_value)
                         except ValueError:
                             pass
+                
+                # Handle battery data from message ID 127508
+                elif "127508" in line:
+                    print("Battery Status Line:", line)
+                    voltage_match = self.voltage_pattern.search(line)
+                    current_match = self.current_pattern.search(line)
+                    battery_temp_match = self.battery_temp_pattern.search(line)
+                    
+                    if voltage_match:
+                        voltage_value = voltage_match.group(1)
+                        print("Voltage:", voltage_value)
+                        self.voltage_signal.emit(voltage_value)
+                    
+                    if current_match:
+                        current_value = current_match.group(1)
+                        print("Current:", current_value)
+                        self.current_signal.emit(current_value)
+                    
+                    if battery_temp_match:
+                        battery_temp_value = battery_temp_match.group(1)
+                        print("Battery Temperature:", battery_temp_value)
+                        self.battery_temp_signal.emit(battery_temp_value)
+                    
+                    # Calculate power if we have both voltage and current
+                    if voltage_match and current_match:
+                        try:
+                            power_value = str(round(float(voltage_match.group(1)) * float(current_match.group(1)), 1) / -1000)
+                            print("Power:", power_value)
+                            self.power_signal.emit(power_value)
+                        except ValueError:
+                            pass
+                
+                # Handle engine temperature from message ID 127489
+                elif "127489" in line:
+                    print("Engine Temperature Line:", line)
+                    engine_temp_match = self.engine_temp_pattern.search(line)
+                    if engine_temp_match:
+                        engine_temp_value = engine_temp_match.group(1)
+                        print("Engine Temperature:", engine_temp_value)
+                        self.engine_temp_signal.emit(engine_temp_value)
+        
         process.terminate()
         process.wait()
 
@@ -83,6 +135,11 @@ class CircularProgressBar(QWidget):
         # Start CAN worker thread
         self.rpm_worker = RPMWorker()
         self.rpm_worker.rpm_signal.connect(self.on_rpm_update)
+        self.rpm_worker.voltage_signal.connect(self.on_voltage_update)
+        self.rpm_worker.current_signal.connect(self.on_current_update)
+        self.rpm_worker.battery_temp_signal.connect(self.on_battery_temp_update)
+        self.rpm_worker.engine_temp_signal.connect(self.on_engine_temp_update)
+        self.rpm_worker.power_signal.connect(self.on_power_update)
         self.rpm_worker.start()
 
     def initUI(self):
@@ -166,10 +223,7 @@ class CircularProgressBar(QWidget):
         self.label12.setFont(QFont(self.font_family, 12))
 
         self.timer = QTimer(self)
-        # Removed: self.timer.timeout.connect(self.udp_receiver)
-        self.timer.timeout.connect(self.simulate_data_update)
         self.timer.timeout.connect(self.update_progress)
-
         self.timer.start(1000)  # Update every 1 seconds
         self.showFullScreen()
 
@@ -254,79 +308,25 @@ class CircularProgressBar(QWidget):
         painter.drawPixmap(img_x, img_y, self.scaled_image)
         painter.end()
 
-    def extract_battery_status(self, decoded_data):
-        # Wyrażenie regularne do wyciągania statusu baterii
-        status_pattern = re.compile(r'\d+\s+50\s+255\s+127508 Battery Status:\s*(.*)')
-        status_pattern2 = re.compile(r'Engine Parameters\s*(.*)')
-        temperature_pattern = re.compile(r'127489.*Temperature = ([\d.]+) C')
+    def on_voltage_update(self, voltage_value):
+        self.voltage = voltage_value
+        self.update_progress()
 
-        status_matches = status_pattern.findall(decoded_data)
-        status_matches2 = status_pattern2.findall(decoded_data)
-        temperature_matches = temperature_pattern.findall(decoded_data)
+    def on_current_update(self, current_value):
+        self.current = current_value
+        self.update_progress()
 
-        if temperature_matches:
-            print(f"Engine Temperature: {temperature_matches[0]}")
-            self.engine_temperature = temperature_matches[0]
+    def on_battery_temp_update(self, battery_temp_value):
+        self.battery_temperature = battery_temp_value
+        self.update_progress()
 
-        if status_matches:
-            print("Battery Status:")
-            for status in status_matches:
-                voltage_match = re.search(r'Voltage = ([\d.]+) V', status)
-                current_match = re.search(r'Current = (-?[\d.]+) A', status)
-                battery_temperature = re.search(r'Temperature = ([\d.]+) C', status)
+    def on_engine_temp_update(self, engine_temp_value):
+        self.engine_temperature = engine_temp_value
+        self.update_progress()
 
-                if voltage_match:
-                    self.voltage = voltage_match.group(1)
-                else:
-                    print("No voltage match found in status:", status)
-
-                if current_match:
-                    self.current = current_match.group(1)
-                else:
-                    print("No current match found in status:", status)
-
-                if battery_temperature:
-                    self.battery_temperature = battery_temperature.group(1)
-                else:
-                    print("No battery temperature match found in status:", status)
-
-            try:
-                self.power = str(round(float(self.voltage) * float(self.current), 1) / -1000)
-            except Exception:
-                self.power = '0.0'
-            print(f"Voltage: {self.voltage} V, Current: {self.current} A, Power: {self.power}, Battery Temperature: {self.battery_temperature}")
-        else:
-            print("Nie znaleziono informacji o statusie baterii.")
-
-        if status_matches2:
-            print("Engine parameters:")
-            for status in status_matches2:
-                float_speed = re.search(r'Speed = ([\d.]+) rpm', status).group(1)
-                self.speed = str(int(float(float_speed)))
-                print(f"Speed: {self.speed} rpm")
-        else:
-            print("Nie znaleziono informacji o statusie baterii.")
-
-    def process_can_data(self, data):
-        try:
-            analyzer_proc = subprocess.Popen(['analyzer'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                             stderr=subprocess.PIPE)
-            stdout, stderr = analyzer_proc.communicate(input=data)
-
-            if stdout:
-                print("Przetworzone dane CAN:")
-                decoded_data = stdout.decode('utf-8').strip()
-                print(decoded_data)
-                self.extract_battery_status(decoded_data)
-            if stderr:
-                print("Błędy:")
-                print(stderr.decode('utf-8').strip())
-        except Exception as e:
-            print(f"Error: {e}")
-
-    def simulate_data_update(self):
-        # Simulate processing CAN data
-        self.process_can_data(self.data)
+    def on_power_update(self, power_value):
+        self.power = power_value
+        self.update_progress()
 
     def update_progress(self):
         current_time = QTime.currentTime()
